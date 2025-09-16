@@ -77,18 +77,6 @@ SELECT COUNT(*) as total_docs,
        MAX(LENGTH(content)) as max_content_length
 FROM stress_docs;
 
-\echo ''
-\echo 'Current Tapir configuration:'
-SHOW tapir.shared_memory_size;
-SHOW tapir.default_limit;
-
-\echo ''
-\echo 'Attempting to create Tapir index with limited memory...'
-\echo 'This should demonstrate memory exhaustion behavior.'
-
--- This should show memory pressure or fail with large dataset
-\echo 'Creating index without CONCURRENTLY to catch any immediate memory issues...'
-
 CREATE INDEX stress_content_idx
 ON stress_docs
 USING tapir(content)
@@ -99,29 +87,36 @@ WITH (text_config='english', k1=1.2, b=0.75);
 
 -- Try various queries to stress the system
 SELECT 'Query 1: Common terms' as test_name;
-SELECT COUNT(*)
-FROM stress_docs
-WHERE content <@> to_tpvector('algorithm optimization performance', 'stress_content_idx') > 0
-LIMIT 100;
+SELECT COUNT(*) FROM (
+    SELECT 1
+    FROM stress_docs
+    ORDER BY content <@> to_tpquery('algorithm optimization performance', 'stress_content_idx')
+    LIMIT 100
+) subq;
 
 SELECT 'Query 2: Technical terms' as test_name;
-SELECT COUNT(*)
-FROM stress_docs
-WHERE content <@> to_tpvector('machine learning artificial intelligence', 'stress_content_idx') > 0
-LIMIT 100;
+SELECT COUNT(*) FROM (
+    SELECT 1
+    FROM stress_docs
+    ORDER BY content <@> to_tpquery('machine learning artificial intelligence', 'stress_content_idx')
+    LIMIT 100
+) subq;
 
 SELECT 'Query 3: Specific terms' as test_name;
-SELECT COUNT(*)
-FROM stress_docs
-WHERE content <@> to_tpvector('postgresql database indexing search', 'stress_content_idx') > 0
-LIMIT 100;
+SELECT COUNT(*) FROM (
+    SELECT 1
+    FROM stress_docs
+    ORDER BY content <@> to_tpquery('postgresql database indexing search', 'stress_content_idx')
+    LIMIT 100
+) subq;
 
--- Try a larger result set to stress memory further
 \echo 'Query 4: Large result set to stress memory allocation'
-SELECT COUNT(*)
-FROM stress_docs
-WHERE content <@> to_tpvector('the and of to in', 'stress_content_idx') > 0
-LIMIT 10000;
+SELECT COUNT(*) FROM (
+    SELECT 1
+    FROM stress_docs
+    ORDER BY content <@> to_tpquery('the and of to in', 'stress_content_idx')
+    LIMIT 10000
+) subq;
 
 -- Clean up
 \echo ''

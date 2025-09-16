@@ -56,7 +56,6 @@ setup_test_db() {
     # Configure test instance
     cat >> "${DATA_DIR}/postgresql.conf" << EOF
 port = ${TEST_PORT}
-shared_preload_libraries = 'tapir'
 log_statement = 'all'
 shared_buffers = 128MB
 max_connections = 20

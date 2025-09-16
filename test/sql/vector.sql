@@ -39,11 +39,7 @@ SELECT to_tpvector('Testing 123 with numbers and text', 'docs_vector_idx');  -- 
 -- Test that different queries create different vectors
 SELECT to_tpvector('hello', 'docs_vector_idx') = to_tpvector('world', 'docs_vector_idx');
 
--- Test error cases
--- Should fail: vectors from different indexes
-\set ON_ERROR_STOP off
-SELECT 'index1:{hello:2,world:1}'::tpvector <@> 'index2:{hello:2,world:1}'::tpvector;
-\set ON_ERROR_STOP on
+-- Test error cases (tpvector <@> tpvector operator removed for consistency)
 
 -- Test nonexistent index error
 \set VERBOSITY terse
@@ -52,21 +48,21 @@ SELECT to_tpvector('test text', 'nonexistent_index');
 \set ON_ERROR_STOP on
 \set VERBOSITY default
 
--- Test tapir scoring using vectorization
+-- Test tapir scoring using standalone text <@> tpquery operations
 SELECT
     content,
-    ROUND((to_tpvector(content, 'docs_vector_idx') <@> to_tpvector('hello world', 'docs_vector_idx'))::numeric, 4) as score
+    ROUND((content <@> to_tpquery('hello world', 'docs_vector_idx'))::numeric, 4) as score
 FROM test_docs
 ORDER BY score;
 
--- Test different query terms
+-- Test different query terms with standalone text <@> tpquery operations
 SELECT
     content,
-    ROUND((to_tpvector(content, 'docs_vector_idx') <@> to_tpvector('postgresql', 'docs_vector_idx'))::numeric, 4) as postgresql_score,
-    ROUND((to_tpvector(content, 'docs_vector_idx') <@> to_tpvector('search', 'docs_vector_idx'))::numeric, 4) as search_score
+    ROUND((content <@> to_tpquery('postgresql', 'docs_vector_idx'))::numeric, 4) as postgresql_score,
+    ROUND((content <@> to_tpquery('search', 'docs_vector_idx'))::numeric, 4) as search_score
 FROM test_docs
-ORDER BY (to_tpvector(content, 'docs_vector_idx') <@> to_tpvector('postgresql', 'docs_vector_idx'))::float8 +
-         (to_tpvector(content, 'docs_vector_idx') <@> to_tpvector('search', 'docs_vector_idx'))::float8;
+ORDER BY (content <@> to_tpquery('postgresql', 'docs_vector_idx'))::float8 +
+         (content <@> to_tpquery('search', 'docs_vector_idx'))::float8;
 
 -- Test vector serialization/deserialization
 SELECT to_tpvector('hello', 'docs_vector_idx')::text;
@@ -88,10 +84,9 @@ SELECT 'docs_vector_idx:{hello:1,world:2}'::tpvector = 'docs_vector_idx:{world:2
 SELECT
     id,
     content,
-    ROUND((to_tpvector(content, 'docs_vector_idx') <@> to_tpvector('quick fox', 'docs_vector_idx'))::numeric, 4) as relevance
+    ROUND((content <@> to_tpquery('quick fox', 'docs_vector_idx'))::numeric, 4) as relevance
 FROM test_docs
-WHERE to_tpvector(content, 'docs_vector_idx') <@> to_tpvector('quick fox', 'docs_vector_idx') < 0  -- Remember: negative scores
-ORDER BY relevance
+ORDER BY content <@> to_tpquery('quick fox', 'docs_vector_idx')  -- BM25 scoring for ranking
 LIMIT 3;
 
 -- Test with another index using simple config
@@ -102,6 +97,33 @@ SELECT
     'running' as query,
     to_tpvector('running runner runs', 'docs_vector_idx') as english_stemmed,
     to_tpvector('running runner runs', 'docs_simple_idx') as simple_no_stem;
+
+-- Test scoring consistency: ORDER BY vs standalone scoring
+\echo 'Testing ORDER BY vs standalone scoring consistency'
+WITH order_by_scores AS (
+    SELECT id, content,
+           ROUND((content <@> to_tpquery('fox dog', 'docs_simple_idx'))::numeric, 6) as order_by_score
+    FROM test_docs
+    ORDER BY content <@> to_tpquery('fox dog', 'docs_simple_idx')
+    LIMIT 3
+),
+standalone_scores AS (
+    -- Force standalone scoring by using all documents and calculating scores explicitly
+    SELECT id, content,
+           ROUND((content <@> to_tpquery('fox dog', 'docs_simple_idx'))::numeric, 6) as standalone_score
+    FROM test_docs
+    -- No WHERE clause to force sequential scan and standalone scoring for all rows
+)
+SELECT o.id,
+       o.order_by_score,
+       s.standalone_score,
+       CASE WHEN abs(o.order_by_score - s.standalone_score) < 0.000001
+            THEN '✓ SCORES MATCH'
+            ELSE '✗ SCORES DIFFER'
+       END as score_consistency
+FROM order_by_scores o
+JOIN standalone_scores s ON o.id = s.id
+ORDER BY o.id;
 
 -- Cleanup
 DROP INDEX docs_vector_idx;

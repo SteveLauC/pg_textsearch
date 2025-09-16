@@ -33,29 +33,29 @@ NOTICE:  Using index options: k1=1.20, b=0.75
 NOTICE:  Tapir index build completed: 10 documents, avg_length=5.30, text_config='english' (k1=1.20, b=0.75)
 -- Verify the index works before "crash"
 SELECT id, content, content <@> to_tpvector('quick fox', 'crash_test_idx') as score
-FROM crash_test_docs
+FROM crash_test_docs 
 WHERE content <@> to_tpvector('quick fox', 'crash_test_idx') > 0
 ORDER BY score DESC
 LIMIT 5;
- id | content | score
+ id | content | score 
 ----+---------+-------
 (0 rows)
 
 -- Test search for common term
 SELECT id, content, content <@> to_tpvector('database', 'crash_test_idx') as score
-FROM crash_test_docs
+FROM crash_test_docs 
 WHERE content <@> to_tpvector('database', 'crash_test_idx') > 0
 ORDER BY score DESC;
- id | content | score
+ id | content | score 
 ----+---------+-------
 (0 rows)
 
 -- Test search for less common terms
 SELECT id, content, content <@> to_tpvector('brown lazy', 'crash_test_idx') as score
-FROM crash_test_docs
+FROM crash_test_docs 
 WHERE content <@> to_tpvector('brown lazy', 'crash_test_idx') > 0
 ORDER BY score DESC;
- id | content | score
+ id | content | score 
 ----+---------+-------
 (0 rows)
 
@@ -78,19 +78,19 @@ NOTICE:  Tapir index build completed: 13 documents, avg_length=5.00, text_config
 \echo 'Testing post-recovery searches:'
 Testing post-recovery searches:
 SELECT id, content, content <@> to_tpvector('quick fox', 'crash_test_idx_recovered') as score
-FROM crash_test_docs
+FROM crash_test_docs 
 WHERE content <@> to_tpvector('quick fox', 'crash_test_idx_recovered') > 0
 ORDER BY score DESC
 LIMIT 5;
- id | content | score
+ id | content | score 
 ----+---------+-------
 (0 rows)
 
 SELECT id, content, content <@> to_tpvector('database recovery', 'crash_test_idx_recovered') as score
-FROM crash_test_docs
+FROM crash_test_docs 
 WHERE content <@> to_tpvector('database recovery', 'crash_test_idx_recovered') > 0
 ORDER BY score DESC;
- id | content | score
+ id | content | score 
 ----+---------+-------
 (0 rows)
 
@@ -99,41 +99,41 @@ ORDER BY score DESC;
 Testing edge cases:
 -- Empty result search
 SELECT COUNT(*) as should_be_zero
-FROM crash_test_docs
+FROM crash_test_docs 
 WHERE content <@> to_tpvector('nonexistent terms', 'crash_test_idx_recovered') > 0;
- should_be_zero
+ should_be_zero 
 ----------------
               0
 (1 row)
 
 -- Single term search
 SELECT id, content, content <@> to_tpvector('fox', 'crash_test_idx_recovered') as score
-FROM crash_test_docs
+FROM crash_test_docs 
 WHERE content <@> to_tpvector('fox', 'crash_test_idx_recovered') > 0
 ORDER BY score DESC;
- id | content | score
+ id | content | score 
 ----+---------+-------
 (0 rows)
 
 -- Multi-word phrase
 SELECT id, content, content <@> to_tpvector('quick brown', 'crash_test_idx_recovered') as score
-FROM crash_test_docs
+FROM crash_test_docs 
 WHERE content <@> to_tpvector('quick brown', 'crash_test_idx_recovered') > 0
 ORDER BY score DESC
 LIMIT 3;
- id | content | score
+ id | content | score 
 ----+---------+-------
 (0 rows)
 
 -- Verify index integrity with some statistics
 \echo 'Index statistics verification:'
 Index statistics verification:
-SELECT
+SELECT 
     COUNT(*) as total_documents,
     COUNT(DISTINCT content) as unique_documents,
     AVG(LENGTH(content)) as avg_content_length
 FROM crash_test_docs;
- total_documents | unique_documents | avg_content_length
+ total_documents | unique_documents | avg_content_length  
 -----------------+------------------+---------------------
               13 |               13 | 41.4615384615384615
 (1 row)

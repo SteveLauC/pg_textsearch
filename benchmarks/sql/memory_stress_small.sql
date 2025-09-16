@@ -63,10 +63,6 @@ SELECT COUNT(*) as total_docs,
        MIN(LENGTH(content)) as min_content_length
 FROM stress_docs_small;
 
-\echo ''
-\echo 'Current Tapir configuration:'
-SHOW tapir.shared_memory_size;
-SHOW tapir.default_limit;
 
 \echo ''
 \echo 'Creating Tapir index on content column...'
@@ -85,24 +81,26 @@ WITH (text_config='english', k1=1.2, b=0.75);
 \echo 'Query 1: Common technical terms'
 SELECT COUNT(*) as matches
 FROM stress_docs_small
-WHERE content <@> to_tpvector('algorithm optimization performance', 'stress_content_small_idx') > 0;
+ORDER BY content <@> to_tpquery('algorithm optimization performance', 'stress_content_small_idx')
+LIMIT 100;
 
 \echo 'Query 2: AI/ML terms'
 SELECT COUNT(*) as matches
 FROM stress_docs_small
-WHERE content <@> to_tpvector('machine learning artificial intelligence', 'stress_content_small_idx') > 0;
+ORDER BY content <@> to_tpquery('machine learning artificial intelligence', 'stress_content_small_idx')
+LIMIT 100;
 
 \echo 'Query 3: Database terms'
 SELECT COUNT(*) as matches
 FROM stress_docs_small
-WHERE content <@> to_tpvector('database postgresql indexing search', 'stress_content_small_idx') > 0;
+ORDER BY content <@> to_tpquery('database postgresql indexing search', 'stress_content_small_idx')
+LIMIT 100;
 
 \echo 'Query 4: Top scoring results'
 SELECT title,
-       content <@> to_tpvector('software development programming', 'stress_content_small_idx') as score
+       content <@> to_tpquery('software development programming', 'stress_content_small_idx') as score
 FROM stress_docs_small
-WHERE content <@> to_tpvector('software development programming', 'stress_content_small_idx') > 0
-ORDER BY score DESC
+ORDER BY content <@> to_tpquery('software development programming', 'stress_content_small_idx')
 LIMIT 5;
 
 \echo 'Query 5: Multiple different searches'
@@ -110,7 +108,8 @@ SELECT
     'AI/ML' as search_type,
     COUNT(*) as matches
 FROM stress_docs_small
-WHERE content <@> to_tpvector('artificial intelligence machine learning', 'stress_content_small_idx') > 0
+ORDER BY content <@> to_tpquery('artificial intelligence machine learning', 'stress_content_small_idx')
+LIMIT 100
 
 UNION ALL
 
@@ -118,7 +117,8 @@ SELECT
     'Security' as search_type,
     COUNT(*) as matches
 FROM stress_docs_small
-WHERE content <@> to_tpvector('security encryption authentication', 'stress_content_small_idx') > 0
+ORDER BY content <@> to_tpquery('security encryption authentication', 'stress_content_small_idx')
+LIMIT 100
 
 UNION ALL
 
@@ -126,7 +126,8 @@ SELECT
     'Development' as search_type,
     COUNT(*) as matches
 FROM stress_docs_small
-WHERE content <@> to_tpvector('programming development software', 'stress_content_small_idx') > 0;
+ORDER BY content <@> to_tpquery('programming development software', 'stress_content_small_idx')
+LIMIT 100;
 
 -- Index statistics
 \echo ''

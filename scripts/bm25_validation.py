@@ -173,7 +173,7 @@ class BM25Validator:
             query_sql = f"""
                 SELECT
                     {id_column} as doc_id,
-                    ({text_column} <@> to_tpvector(%s, %s))::float8 as score
+                    ({text_column} <@> to_tpquery(%s, %s))::float8 as score
                 FROM {table_name}
             """
 

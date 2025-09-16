@@ -37,10 +37,10 @@ psql -c "CREATE EXTENSION IF NOT EXISTS tapir;" || {
 echo "Tapir extension loaded successfully."
 echo ""
 
-# Show initial configuration
+# Show initial configuration (skip if parameters not available)
 echo "=== Initial Configuration ==="
-psql -c "SHOW tapir.shared_memory_size;"
-psql -c "SHOW tapir.default_limit;"
+psql -c "SHOW tapir.index_memory_limit;" 2>/dev/null || echo "tapir.index_memory_limit: (parameter not visible)"
+psql -c "SHOW tapir.default_limit;" 2>/dev/null || echo "tapir.default_limit: (parameter not visible)"
 echo ""
 
 # Phase 1: Load Cranfield dataset
