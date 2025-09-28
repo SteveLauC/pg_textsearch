@@ -66,12 +66,14 @@ jobs:
         chmod +x build.sh
 
         # Run build in TimescaleDB container with proper architecture
+        # Run as root to install dependencies
         docker run --rm \
           --platform ${{ matrix.platform.docker_platform }} \
           -v "$PWD:/build" \
           -w /build \
+          --user root \
           timescale/timescaledb-ha:pg17-all \
-          /build/build.sh "$VERSION" "${{ matrix.platform.type }}"
+          bash -c "apt-get update && apt-get install -y build-essential && /build/build.sh '$VERSION' '${{ matrix.platform.type }}'"
 
     - name: Verify package architecture
       run: |
