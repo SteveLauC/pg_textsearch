@@ -11,6 +11,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write  # Needed to upload assets to releases
+
 jobs:
   build-packages:
     runs-on: ubuntu-latest
@@ -146,27 +149,25 @@ jobs:
       with:
         path: artifacts
 
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
+    - name: Upload Release Assets
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
-        draft: false
-        prerelease: false
-
-    - name: Upload Release Assets
       run: |
+        TAG_NAME="${GITHUB_REF#refs/tags/}"
+
+        # Check if release exists, create if it doesn't
+        if ! gh release view "$TAG_NAME" &>/dev/null; then
+          echo "Creating release for tag $TAG_NAME"
+          gh release create "$TAG_NAME" \
+            --title "Release $TAG_NAME" \
+            --notes "Release $TAG_NAME" \
+            --draft
+        fi
+
+        # Upload all .deb and source packages
         for file in artifacts/*/*.deb artifacts/*/*.tar.*; do
           if [ -f "$file" ]; then
-            echo "Uploading $file"
-            asset_name=$(basename "$file")
-            curl -X POST \
-              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @"$file" \
-              "${{ steps.create_release.outputs.upload_url }}?name=$asset_name"
+            echo "Uploading $(basename "$file") to release $TAG_NAME"
+            gh release upload "$TAG_NAME" "$file" --clobber
           fi
         done
