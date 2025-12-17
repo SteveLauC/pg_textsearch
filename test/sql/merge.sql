@@ -63,6 +63,7 @@ INSERT INTO merge_test (content) VALUES ('goodbye database friend');
 
 -- Second spill creates segment 2 in L0, which triggers merge to L1
 -- After merge: L0 is empty (cleared), L1 has merged segment
+-- Note: Run with client_min_messages=debug1 to see merge DEBUG messages
 SELECT bm25_spill_index('merge_test_idx') IS NOT NULL AS second_spill;
 
 -- After merge: merged segment in L1, L0 is empty
