@@ -2,7 +2,7 @@
  * Copyright (c) 2025 Tiger Data, Inc.
  * Licensed under the PostgreSQL License. See LICENSE for details.
  *
- * types/score.c - BM25 scoring operators and document ranking
+ * query/score.c - BM25 scoring operators and document ranking
  */
 #include <postgres.h>
 
@@ -14,11 +14,17 @@
 
 #include "memtable/memtable.h"
 #include "memtable/source.h"
+#include "memtable/stringtable.h"
+#include "query/bmw.h"
+#include "query/score.h"
 #include "segment/segment.h"
 #include "source.h"
 #include "state/metapage.h"
 #include "state/state.h"
-#include "types/score.h"
+
+/* GUC variables from mod.c */
+extern bool tp_log_bmw_stats;
+extern bool tp_enable_bmw;
 
 /*
  * Centralized IDF calculation (basic version)
@@ -286,6 +292,77 @@ tp_extract_and_sort_documents(
 }
 
 /*
+ * Get unified doc_freq for a term (memtable + all segments).
+ * Returns 0 if term not found in any source.
+ */
+static uint32
+tp_get_unified_doc_freq(
+		TpLocalIndexState *local_state,
+		Relation		   index,
+		const char		  *term,
+		BlockNumber		  *level_heads)
+{
+	uint32		   doc_freq = 0;
+	TpPostingList *posting_list;
+	int			   level;
+
+	/* Get doc_freq from memtable */
+	posting_list = tp_get_posting_list(local_state, term);
+	if (posting_list && posting_list->doc_count > 0)
+		doc_freq = posting_list->doc_count;
+
+	/* Add doc_freq from all segment levels */
+	for (level = 0; level < TP_MAX_LEVELS; level++)
+	{
+		if (level_heads[level] != InvalidBlockNumber)
+		{
+			doc_freq +=
+					tp_segment_get_doc_freq(index, level_heads[level], term);
+		}
+	}
+
+	return doc_freq;
+}
+
+/*
+ * Batch get unified doc_freq for multiple terms (memtable + all segments).
+ * Much faster than calling tp_get_unified_doc_freq in a loop because
+ * it opens each segment only once instead of once per term.
+ */
+static void
+tp_batch_get_unified_doc_freq(
+		TpLocalIndexState *local_state,
+		Relation		   index,
+		char			 **terms,
+		int				   term_count,
+		BlockNumber		  *level_heads,
+		uint32			  *doc_freqs)
+{
+	int level;
+	int i;
+
+	/* Initialize doc_freqs with memtable counts */
+	for (i = 0; i < term_count; i++)
+	{
+		TpPostingList *posting_list =
+				tp_get_posting_list(local_state, terms[i]);
+		doc_freqs[i] = (posting_list && posting_list->doc_count > 0)
+							 ? posting_list->doc_count
+							 : 0;
+	}
+
+	/* Add doc_freq from all segment levels (batch lookup) */
+	for (level = 0; level < TP_MAX_LEVELS; level++)
+	{
+		if (level_heads[level] != InvalidBlockNumber)
+		{
+			tp_batch_get_segment_doc_freq(
+					index, level_heads[level], terms, term_count, doc_freqs);
+		}
+	}
+}
+
+/*
  * Copy results to output arrays
  */
 static void
@@ -383,6 +460,150 @@ tp_score_documents(
 	 * would get zero BM25 scores */
 	if (avg_doc_len <= 0.0f)
 		return 0;
+
+	/*
+	 * BMW fast path for single-term queries.
+	 * Uses Block-Max WAND to skip blocks that can't contribute to top-k.
+	 */
+	if (tp_enable_bmw && query_term_count == 1)
+	{
+		const char *term = query_terms[0];
+		uint32		doc_freq;
+		float4		idf;
+		float4	   *scores;
+		int			result_count;
+		TpBMWStats	stats;
+
+		/* Get unified doc_freq across memtable and segments */
+		doc_freq = tp_get_unified_doc_freq(
+				local_state, index_relation, term, level_heads);
+		if (doc_freq == 0)
+			return 0;
+
+		/* Calculate IDF */
+		idf = tp_calculate_idf(doc_freq, total_docs);
+
+		/* Allocate scores array */
+		scores = (float4 *)palloc(max_results * sizeof(float4));
+
+		/* Run BMW scoring */
+		result_count = tp_score_single_term_bmw(
+				local_state,
+				index_relation,
+				term,
+				idf,
+				k1,
+				b,
+				avg_doc_len,
+				max_results,
+				result_ctids,
+				scores,
+				&stats);
+
+		/* Log BMW stats if enabled */
+		if (tp_log_bmw_stats)
+		{
+			elog(LOG,
+				 "BMW stats: memtable=%lu docs, segments=%lu docs "
+				 "(blocks: %lu scanned, %lu skipped, %.1f%% skip), "
+				 "results=%lu",
+				 (unsigned long)stats.memtable_docs,
+				 (unsigned long)stats.segment_docs_scored,
+				 (unsigned long)stats.blocks_scanned,
+				 (unsigned long)stats.blocks_skipped,
+				 (stats.blocks_scanned + stats.blocks_skipped) > 0
+						 ? 100.0 * stats.blocks_skipped /
+								   (stats.blocks_scanned +
+									stats.blocks_skipped)
+						 : 0.0,
+				 (unsigned long)stats.docs_in_results);
+		}
+
+		*result_scores = scores;
+		return result_count;
+	}
+
+	/*
+	 * BMW fast path for multi-term queries.
+	 * Uses block-level upper bounds to skip non-contributing blocks.
+	 */
+	if (tp_enable_bmw && query_term_count >= 2)
+	{
+		uint32	  *doc_freqs;
+		float4	  *idfs;
+		float4	  *scores;
+		int		   result_count;
+		int		   i;
+		TpBMWStats stats;
+
+		/* Batch lookup doc_freqs for all terms (opens each segment once) */
+		doc_freqs = palloc(query_term_count * sizeof(uint32));
+		tp_batch_get_unified_doc_freq(
+				local_state,
+				index_relation,
+				query_terms,
+				query_term_count,
+				level_heads,
+				doc_freqs);
+
+		/* Convert doc_freqs to IDFs */
+		idfs = palloc(query_term_count * sizeof(float4));
+		for (i = 0; i < query_term_count; i++)
+		{
+			idfs[i] = (doc_freqs[i] > 0)
+							? tp_calculate_idf(doc_freqs[i], total_docs)
+							: 0.0f;
+		}
+		pfree(doc_freqs);
+
+		/* Allocate scores array */
+		scores = (float4 *)palloc(max_results * sizeof(float4));
+
+		/* Run multi-term BMW scoring */
+		result_count = tp_score_multi_term_bmw(
+				local_state,
+				index_relation,
+				query_terms,
+				query_term_count,
+				query_frequencies,
+				idfs,
+				k1,
+				b,
+				avg_doc_len,
+				max_results,
+				result_ctids,
+				scores,
+				&stats);
+
+		pfree(idfs);
+
+		/* If BMW returns -1, fall through to exhaustive path */
+		if (result_count >= 0)
+		{
+			/* Log BMW stats if enabled */
+			if (tp_log_bmw_stats)
+			{
+				elog(LOG,
+					 "BMW stats: memtable=%lu docs, segments=%lu docs "
+					 "(blocks: %lu scanned, %lu skipped, %.1f%% skip), "
+					 "results=%lu",
+					 (unsigned long)stats.memtable_docs,
+					 (unsigned long)stats.segment_docs_scored,
+					 (unsigned long)stats.blocks_scanned,
+					 (unsigned long)stats.blocks_skipped,
+					 (stats.blocks_scanned + stats.blocks_skipped) > 0
+							 ? 100.0 * stats.blocks_skipped /
+									   (stats.blocks_scanned +
+										stats.blocks_skipped)
+							 : 0.0,
+					 (unsigned long)stats.docs_in_results);
+			}
+
+			*result_scores = scores;
+			return result_count;
+		}
+		pfree(scores);
+	}
 
 	/* Create hash table for accumulating document scores - needed for both
 	 * memtable and segment searches */

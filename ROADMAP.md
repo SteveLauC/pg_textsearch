@@ -10,36 +10,29 @@
 | v0.0.4 | Nov 2025 | BM25 score validation, PostgreSQL 18 support |
 | v0.0.5 | Dec 2025 | Segment infrastructure, auto-spill, hierarchical merging |
 | v0.1.0 | Dec 2025 | First open-source release, implicit index resolution, partitioned tables |
+| v0.2.0 | Dec 2025 | V2 segment format, skip index, doc ID mapping, benchmark suite |
 
-## v0.2.0 - Block Storage Foundation
+## Upcoming
 
-Block storage foundation for query optimizations.
-
-- **V2 segment format**: Block-based posting storage (128 docs/block)
-- **Skip index**: Per-block metadata (last_doc_id, max_tf, max_fieldnorm)
-- **Doc ID mapping**: Compact 4-byte segment-local IDs instead of 6-byte CTIDs
-- **Fieldnorm quantization**: 1-byte encoded document lengths
-- **Index build optimizations**: Binary search and direct mapping for CTID lookups
-- **Unlimited indexes**: dshash registry removes fixed limit on concurrent indexes
-- **Benchmark suite**: MS MARCO and Wikipedia benchmarks with public dashboard
-
-## Future
-
-### v0.3.0 - Query Optimizations
+### v0.3.0 - Query Optimizations (Jan 2026)
 
 Query-time performance improvements building on block storage.
 
-- **Block-Max WAND/MAXSCORE**: Early termination for top-k queries
-- **Threshold-based block skipping**: Skip blocks that can't contribute to top-k
+- **Block-Max WAND (BMW)**: Single-term and multi-term scoring with block skipping
+- **WAND-style doc-ID traversal**: Correct multi-term scoring via doc-ID ordered iteration
+- **Threshold-based block skipping**: Skip blocks where max score < threshold
+- **Block max score precomputation**: Per-term block upper bounds for pruning
+- **GUC variables**: `pg_textsearch.enable_bmw` and `log_bmw_stats` for debugging
+- **Benchmark results**: 4.3x faster than exhaustive, competitive with System X
 
-### v0.4.0 - Compression
+### v0.4.0 - Compression (Jan 2026)
 
 Reduce storage footprint via posting list compression.
 
 - **Delta encoding**: Compact doc ID storage
 - **FOR/PFOR**: Frame-of-reference encoding for posting blocks
 
-### v1.0.0 - Production Ready (Target: Feb 2026)
+### v1.0.0 - Production Ready (Feb 2026)
 
 First production-quality release.
 
