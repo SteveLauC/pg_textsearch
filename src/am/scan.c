@@ -603,25 +603,14 @@ tp_execute_scoring_query(IndexScanDesc scan)
 	so->current_pos	 = 0;
 
 	/* Get index metadata */
-	PG_TRY();
+	metap = tp_get_metapage(scan->indexRelation);
+	if (!metap)
 	{
-		metap = tp_get_metapage(scan->indexRelation);
-		if (!metap)
-		{
-			elog(WARNING,
-				 "Failed to get metapage for index %s",
-				 RelationGetRelationName(scan->indexRelation));
-			return false;
-		}
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("failed to get metapage for index %s",
+						RelationGetRelationName(scan->indexRelation))));
 	}
-	PG_CATCH();
-	{
-		elog(WARNING,
-			 "Exception while getting metapage for index %s",
-			 RelationGetRelationName(scan->indexRelation));
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
 
 	/* Get the index state with posting lists */
 	index_state = tp_get_local_index_state(
@@ -629,9 +618,10 @@ tp_execute_scoring_query(IndexScanDesc scan)
 
 	if (!index_state)
 	{
-		elog(WARNING, "Could not get index state for BM25 search");
 		pfree(metap);
-		return false;
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("could not get index state for BM25 search")));
 	}
 
 	/* Acquire shared lock for reading the memtable */
@@ -667,9 +657,10 @@ tp_execute_scoring_query(IndexScanDesc scan)
 
 	if (!query_vector)
 	{
-		elog(WARNING, "No query vector available in scan state");
 		pfree(metap);
-		return false;
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("no query vector available in scan state")));
 	}
 
 	/* Find documents matching the query using posting lists */
@@ -713,25 +704,20 @@ tp_gettuple(IndexScanDesc scan, ScanDirection dir)
 	Assert(so->result_ctids != NULL);
 	Assert(so->current_pos < so->result_count);
 
-	/*
-	 * Skip invalid block numbers in a loop (not recursively, to avoid
-	 * stack overflow if many consecutive results are invalid).
-	 */
-	while (so->current_pos < so->result_count)
+	Assert(ItemPointerIsValid(&so->result_ctids[so->current_pos]));
+
+	/* Additional validation - check for obviously invalid block numbers */
+	blknum = BlockIdGetBlockNumber(
+			&(so->result_ctids[so->current_pos].ip_blkid));
+	if (blknum == InvalidBlockNumber || blknum > TP_MAX_BLOCK_NUMBER)
 	{
-		Assert(ItemPointerIsValid(&so->result_ctids[so->current_pos]));
-
-		blknum = BlockIdGetBlockNumber(
-				&(so->result_ctids[so->current_pos].ip_blkid));
-		if (blknum != InvalidBlockNumber && blknum <= TP_MAX_BLOCK_NUMBER)
-			break; /* Found valid result */
-
-		/* Skip invalid result */
+		/* Skip this result and try the next one */
 		so->current_pos++;
+		if (so->current_pos >= so->result_count)
+			return false;
+		/* Recursive call to try the next result */
+		return tp_gettuple(scan, dir);
 	}
-
-	if (so->current_pos >= so->result_count)
-		return false;
 
 	scan->xs_heaptid		= so->result_ctids[so->current_pos];
 	scan->xs_recheck		= false;
