@@ -77,6 +77,10 @@ jobs:
         leak:MemoryContextAlloc
         leak:palloc
         leak:repalloc
+        # PostgreSQL frontend utilities (pg_config, etc.) use pg_strdup and don't free
+        # memory before exit - this is normal for short-lived command-line tools
+        leak:pg_strdup
+        leak:get_configdata
         # OpenSSL has some one-time initialization allocations
         leak:libssl
         leak:libcrypto

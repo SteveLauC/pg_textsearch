@@ -9,6 +9,11 @@ leak:MemoryContextAlloc
 leak:palloc
 leak:repalloc
 
+# PostgreSQL frontend utilities (pg_config, etc.) allocate memory and
+# exit without freeing - normal for short-lived command-line tools
+leak:pg_strdup
+leak:get_configdata
+
 # OpenSSL one-time initialization
 leak:libssl
 leak:libcrypto
