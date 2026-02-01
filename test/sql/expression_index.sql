@@ -20,11 +20,20 @@ INSERT INTO owners (name) VALUES
 
 INSERT INTO product_logs (data) VALUES
     ('{"title": "Super Widget", "details": "High performance widget for database engineers"}'),
-    ('{"title": "Mega Gadget", "details": "Optimized gadget with low latency"}');
+    ('{"title": "Mega Gadget", "details": "Optimized gadget with low latency"}'),
+    -- test it still works when 'details' is NULL
+    ('{"title": "Untitled"}');
 
 CREATE INDEX idx_json_details ON product_logs
 USING bm25 ((data->>'details'))
 WITH (text_config='english', k1=1.2, b=0.75);
+
+-- Expression result must be text; non-text expressions should error.
+\set ON_ERROR_STOP off
+CREATE INDEX idx_json_details_len ON product_logs
+USING bm25 ((length(data->>'details')))
+WITH (text_config='english', k1=1.2, b=0.75);
+\set ON_ERROR_STOP on
 
 -- Basic ORDER BY uses implicit index resolution for the expression index.
 EXPLAIN (COSTS OFF)
@@ -50,6 +59,34 @@ SELECT l.id, l.data->>'details' AS details
 FROM owners o
 JOIN product_logs l ON o.id = l.id
 ORDER BY (l.data->>'details') <@> 'widget', l.id
+LIMIT 2;
+
+-- Expression index with concatenation and NULL handling.
+CREATE TABLE product_logs_concat (
+    id serial PRIMARY KEY,
+    data jsonb
+);
+
+INSERT INTO product_logs_concat (data) VALUES
+    ('{"title": "Widget Primer", "details": "Introductory guide"}'),
+    ('{"title": "Gadget Notes", "details": null}');
+
+CREATE INDEX product_logs_concat_idx ON product_logs_concat
+USING bm25 ((coalesce(data->>'title', '') || ' ' ||
+             coalesce(data->>'details', '')))
+WITH (text_config='english', k1=1.2, b=0.75);
+
+EXPLAIN (COSTS OFF)
+SELECT id
+FROM product_logs_concat
+ORDER BY (coalesce(data->>'title', '') || ' ' ||
+          coalesce(data->>'details', '')) <@> 'widget'
+LIMIT 2;
+
+SELECT id
+FROM product_logs_concat
+ORDER BY (coalesce(data->>'title', '') || ' ' ||
+          coalesce(data->>'details', '')) <@> 'widget', id
 LIMIT 2;
 
 -- Parallel build for expression indexes.
@@ -90,5 +127,6 @@ LIMIT 5;
 
 DROP TABLE product_logs CASCADE;
 DROP TABLE owners CASCADE;
+DROP TABLE product_logs_concat CASCADE;
 DROP TABLE product_logs_parallel CASCADE;
 DROP EXTENSION pg_textsearch CASCADE;

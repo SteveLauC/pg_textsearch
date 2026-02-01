@@ -15,7 +15,9 @@ INSERT INTO owners (name) VALUES
     ('Grace Hopper');
 INSERT INTO product_logs (data) VALUES
     ('{"title": "Super Widget", "details": "High performance widget for database engineers"}'),
-    ('{"title": "Mega Gadget", "details": "Optimized gadget with low latency"}');
+    ('{"title": "Mega Gadget", "details": "Optimized gadget with low latency"}'),
+    -- test it still works when 'details' is NULL
+    ('{"title": "Untitled"}');
 CREATE INDEX idx_json_details ON product_logs
 USING bm25 ((data->>'details'))
 WITH (text_config='english', k1=1.2, b=0.75);
@@ -23,6 +25,14 @@ NOTICE:  BM25 index build started for relation idx_json_details
 NOTICE:  Using text search configuration: english
 NOTICE:  Using index options: k1=1.20, b=0.75
 NOTICE:  BM25 index build completed: 2 documents, avg_length=4.50, text_config='english' (k1=1.20, b=0.75)
+-- Expression result must be text; non-text expressions should error.
+\set ON_ERROR_STOP off
+CREATE INDEX idx_json_details_len ON product_logs
+USING bm25 ((length(data->>'details')))
+WITH (text_config='english', k1=1.2, b=0.75);
+ERROR:  data type integer has no default operator class for access method "bm25"
+HINT:  You must specify an operator class for the index or define a default operator class for the data type.
+\set ON_ERROR_STOP on
 -- Basic ORDER BY uses implicit index resolution for the expression index.
 EXPLAIN (COSTS OFF)
 SELECT id
@@ -70,6 +80,45 @@ LIMIT 2;
  id |                    details                     
 ----+------------------------------------------------
   1 | High performance widget for database engineers
+(1 row)
+
+-- Expression index with concatenation and NULL handling.
+CREATE TABLE product_logs_concat (
+    id serial PRIMARY KEY,
+    data jsonb
+);
+INSERT INTO product_logs_concat (data) VALUES
+    ('{"title": "Widget Primer", "details": "Introductory guide"}'),
+    ('{"title": "Gadget Notes", "details": null}');
+CREATE INDEX product_logs_concat_idx ON product_logs_concat
+USING bm25 ((coalesce(data->>'title', '') || ' ' ||
+             coalesce(data->>'details', '')))
+WITH (text_config='english', k1=1.2, b=0.75);
+NOTICE:  BM25 index build started for relation product_logs_concat_idx
+NOTICE:  Using text search configuration: english
+NOTICE:  Using index options: k1=1.20, b=0.75
+NOTICE:  BM25 index build completed: 2 documents, avg_length=3.00, text_config='english' (k1=1.20, b=0.75)
+EXPLAIN (COSTS OFF)
+SELECT id
+FROM product_logs_concat
+ORDER BY (coalesce(data->>'title', '') || ' ' ||
+          coalesce(data->>'details', '')) <@> 'widget'
+LIMIT 2;
+                                                                                     QUERY PLAN                                                                                      
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Index Scan using product_logs_concat_idx on product_logs_concat
+         Order By: (((COALESCE((data ->> 'title'::text), ''::text) || ' '::text) || COALESCE((data ->> 'details'::text), ''::text)) <@> 'product_logs_concat_idx:widget'::bm25query)
+(3 rows)
+
+SELECT id
+FROM product_logs_concat
+ORDER BY (coalesce(data->>'title', '') || ' ' ||
+          coalesce(data->>'details', '')) <@> 'widget', id
+LIMIT 2;
+ id 
+----
+  1
 (1 row)
 
 -- Parallel build for expression indexes.
@@ -123,5 +172,6 @@ LIMIT 5;
 
 DROP TABLE product_logs CASCADE;
 DROP TABLE owners CASCADE;
+DROP TABLE product_logs_concat CASCADE;
 DROP TABLE product_logs_parallel CASCADE;
 DROP EXTENSION pg_textsearch CASCADE;
