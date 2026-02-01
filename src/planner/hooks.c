@@ -25,12 +25,14 @@
 #include <nodes/makefuncs.h>
 #include <nodes/nodeFuncs.h>
 #include <nodes/plannodes.h>
+#include <nodes/print.h>
 #include <optimizer/optimizer.h>
 #include <optimizer/planner.h>
 #include <parser/analyze.h>
 #include <parser/parse_func.h>
 #include <parser/parse_oper.h>
 #include <parser/parsetree.h>
+#include <rewrite/rewriteManip.h>
 #include <utils/builtins.h>
 #include <utils/catcache.h>
 #include <utils/fmgroids.h>
@@ -185,11 +187,13 @@ get_bm25_oids(BM25OidCache *cache)
  * expression indexes (e.g., USING bm25(lower(col))).
  *
  * Inputs:
- *      idx_attnum:   Attribute number from pg_index.indkey[i] (0 for
- * expressions). idx_expr:     Deserialized expression tree if idx_attnum == 0,
- * else NULL. query_attnum: Attribute number extracted from query if it's a
- * Var, otherwise InvalidAttrNumber. query_expr:   The full expression tree
- * from the query.
+ * - idx_attnum: Attribute number from pg_index.indkey[i] (0 for
+ *    expressions).
+ * - idx_expr: Deserialized expression tree if idx_attnum == 0,
+ *   else NULL.
+ * - query_attnum: Attribute number extracted from query if it's a
+ *   Var, otherwise InvalidAttrNumber.
+ * - query_expr: The full expression tree from the query.
  */
 static bool
 bm25_key_matches_query(
@@ -217,7 +221,12 @@ bm25_key_matches_query(
  * Find BM25 index.
  */
 static Oid
-find_bm25_index(Oid relid, AttrNumber attnum, Node *expr, Oid bm25_am_oid)
+find_bm25_index(
+		Oid		   relid,
+		AttrNumber attnum,
+		int		   rt_index,
+		Node	  *expr,
+		Oid		   bm25_am_oid)
 {
 	Relation	indexRelation;
 	SysScanDesc scan;
@@ -287,6 +296,29 @@ find_bm25_index(Oid relid, AttrNumber attnum, Node *expr, Oid bm25_am_oid)
 					{
 						idx_expr = (Node *)lfirst(lc_expr);
 						lc_expr	 = lnext(indexExprs, lc_expr);
+
+						/*
+						 * Var nodes in pg_index.indexprs always have varno set
+						 * to 1 because when you
+						 *
+						 * CREATE INDEX idx ON article USING bm25
+						 * (lower(content)) WITH (...)
+						 *
+						 * article has RT index 1, and the Var node in
+						 * lower(content) therefore has varno = 1. This does
+						 * not hold for queries. For example:
+						 *
+						 * SELECT * FROM author, article ORDER BY
+						 * lower(content) <@> 'some content'
+						 *
+						 * Since "article" now has RT index 2 in the query,
+						 * Var.varno is also 2.
+						 *
+						 * To fix this, we update the Var nodes in idx_expr to
+						 * set their varno to the table's RT index in the query
+						 * tree.
+						 */
+						ChangeVarNodes(idx_expr, 1, rt_index, 0);
 					}
 				}
 
@@ -336,33 +368,38 @@ get_var_relation_and_attnum(
 }
 
 /*
- * Extract relation OID from an Expr node.
+ * The Var nodes in expr reference the same relation, this function extracts
+ * that relation's OID and its RT index in query.rtable.
+ *
+ * Return true is the extraction is successful.
  */
-static Oid
-get_expr_relation(Node *expr, Query *query)
+static bool
+get_expr_relation_and_rtable_index(
+		Node *expr, Query *query, Oid *relid_out, int *rt_index_out)
 {
 	List		  *vars;
 	Var			  *var;
 	RangeTblEntry *rte;
-	Oid			   relid;
 
-	/*
-	 * All the Var nodes with in expr should point to the same relation.
-	 * So we just extract the relation info from the first node.
-	 */
 	vars = pull_var_clause(expr, 0);
 	if (!vars || list_length(vars) == 0)
-		return InvalidOid;
+		return false;
+	/*
+	 * All the Var nodes with in expr should reference the same relation.
+	 * So we just extract the relation info from the first Var node.
+	 */
 	var = (Var *)linitial(vars);
 
 	if (var->varno < 1 || var->varno > list_length(query->rtable))
-		return InvalidOid;
+		return false;
 
-	rte	  = rt_fetch(var->varno, query->rtable);
-	relid = rte->relid;
+	rte = rt_fetch(var->varno, query->rtable);
+
+	*relid_out	  = rte->relid;
+	*rt_index_out = var->varno;
 
 	list_free(vars);
-	return relid;
+	return true;
 }
 
 /*
@@ -371,8 +408,11 @@ get_expr_relation(Node *expr, Query *query)
 static Oid
 find_index_for_expr(Node *expr, ResolveIndexContext *context)
 {
-	Oid		   relid;
-	AttrNumber attnum = InvalidAttrNumber;
+	Oid relid;
+	/* RT index starts from 1, set it to 0 in case it won't be initialized */
+	int		   rt_index	 = 0;
+	AttrNumber attnum	 = InvalidAttrNumber;
+	bool	   extracted = false;
 
 	/*
 	 * Get the relid and possibly an attribute number if expr is a Var node
@@ -385,15 +425,14 @@ find_index_for_expr(Node *expr, ResolveIndexContext *context)
 	}
 	else
 	{
-		relid = get_expr_relation(expr, context->query);
-		if (!OidIsValid(relid))
-		{
+		extracted = get_expr_relation_and_rtable_index(
+				expr, context->query, &relid, &rt_index);
+		if (!extracted)
 			return InvalidOid;
-		}
 	}
 
 	return find_bm25_index(
-			relid, attnum, expr, context->oid_cache->bm25_am_oid);
+			relid, attnum, rt_index, expr, context->oid_cache->bm25_am_oid);
 }
 
 /*
