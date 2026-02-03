@@ -167,25 +167,46 @@ WITH (text_config='english', k1=1.2, b=0.75);
 NOTICE:  BM25 index build started for relation expr_idx_product_logs_parallel_idx
 NOTICE:  Using text search configuration: english
 NOTICE:  Using index options: k1=1.20, b=0.75
-ERROR:  too many dynamic shared memory segments
+NOTICE:  parallel index build: launched 2 of 2 requested workers
 SELECT id
 FROM expr_idx_product_logs_parallel
 ORDER BY (data->>'details') <@> 'widget', id
 LIMIT 5;
-ERROR:  no BM25 index found for text <@> text expression
-DETAIL:  Create a BM25 index on the column or use ORDER BY.
-HINT:  SELECT col <@> to_bm25query('q', 'idx') AS score
+ id 
+----
+  1
+  2
+  3
+  4
+  5
+(5 rows)
+
 SELECT id
 FROM expr_idx_product_logs_parallel
 ORDER BY (data->>'details') <@> bm25query('widget'), id
 LIMIT 5;
-ERROR:  text <@> tpquery operator requires index
-HINT:  Use to_tpquery(text, index_name) for standalone scoring
+ id 
+----
+  1
+  2
+  3
+  4
+  5
+(5 rows)
+
 SELECT id
 FROM expr_idx_product_logs_parallel
 ORDER BY (data->>'details') <@> to_bm25query('widget', 'expr_idx_product_logs_parallel_idx'), id
 LIMIT 5;
-ERROR:  index "expr_idx_product_logs_parallel_idx" does not exist
+ id 
+----
+  1
+  2
+  3
+  4
+  5
+(5 rows)
+
 -- =====================================================================
 -- Expression result must be text; non-text expressions should error.
 -- =====================================================================
