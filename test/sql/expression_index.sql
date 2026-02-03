@@ -25,19 +25,19 @@ WITH (text_config='english', k1=1.2, b=0.75);
 -- Index resolution: expr <@> 'query'
 SELECT id, data->>'details' AS details
 FROM expr_idx_product_logs
-ORDER BY (data->>'details') <@> 'widget'
+ORDER BY (data->>'details') <@> 'widget', id
 LIMIT 2;
 
 -- Index resolution: expr <@> bm25query('query')
 SELECT id, data->>'details' AS details
 FROM expr_idx_product_logs
-ORDER BY (data->>'details') <@> bm25query('widget')
+ORDER BY (data->>'details') <@> bm25query('widget'), id
 LIMIT 2;
 
 -- Explicit index
 SELECT id, data->>'details' AS details
 FROM expr_idx_product_logs
-ORDER BY (data->>'details') <@> to_bm25query('widget', 'expr_idx_idx_json_details')
+ORDER BY (data->>'details') <@> to_bm25query('widget', 'expr_idx_idx_json_details'), id
 LIMIT 2;
 
 
@@ -53,7 +53,7 @@ INSERT INTO expr_idx_news VALUES
     ('Postgres search extension', 'pg_textsearch 0.5.0 released'),
     ('Postgres is eating the database world', 'a solid core with many amazing extensions'),
     (NULL, 'foo bar buzz'),
-    ('foo bar buzz', NULL);
+    ('foo bar buzz woo', NULL);
 
 CREATE INDEX expr_idx_idx_news ON expr_idx_news
 USING bm25 ((coalesce(title, '') || ' ' || coalesce(content, '')))
@@ -61,17 +61,17 @@ WITH (text_config='english', k1=1.2, b=0.75);
 
 SELECT title
 FROM expr_idx_news
-ORDER BY ((coalesce(title, '') || ' ' || coalesce(content, ''))) <@> 'foo'
+ORDER BY ((coalesce(title, '') || ' ' || coalesce(content, ''))) <@> 'foo', title
 LIMIT 3;
 
 SELECT title
 FROM expr_idx_news
-ORDER BY ((coalesce(title, '') || ' ' || coalesce(content, ''))) <@> bm25query('foo')
+ORDER BY ((coalesce(title, '') || ' ' || coalesce(content, ''))) <@> bm25query('foo'), title
 LIMIT 3;
 
 SELECT title
 FROM expr_idx_news
-ORDER BY ((coalesce(title, '') || ' ' || coalesce(content, ''))) <@> to_bm25query('foo', 'expr_idx_idx_news')
+ORDER BY ((coalesce(title, '') || ' ' || coalesce(content, ''))) <@> to_bm25query('foo', 'expr_idx_idx_news'), title
 LIMIT 3;
 
 
@@ -90,19 +90,19 @@ INSERT INTO expr_idx_owners(name) VALUES
 SELECT l.id
 FROM expr_idx_owners o JOIN expr_idx_product_logs l 
 ON o.id = l.id
-ORDER BY (l.data->>'details') <@> 'widget'
+ORDER BY (l.data->>'details') <@> 'widget', l.id
 LIMIT 2;
 
 SELECT l.id
 FROM expr_idx_owners o JOIN expr_idx_product_logs l 
 ON o.id = l.id
-ORDER BY (l.data->>'details') <@> bm25query('widget')
+ORDER BY (l.data->>'details') <@> bm25query('widget'), l.id
 LIMIT 2;
 
 SELECT l.id
 FROM expr_idx_owners o JOIN expr_idx_product_logs l 
 ON o.id = l.id
-ORDER BY (l.data->>'details') <@> to_bm25query('widget', 'expr_idx_idx_json_details')
+ORDER BY (l.data->>'details') <@> to_bm25query('widget', 'expr_idx_idx_json_details'), l.id
 LIMIT 2;
 
 
@@ -136,17 +136,17 @@ WITH (text_config='english', k1=1.2, b=0.75);
 
 SELECT id
 FROM expr_idx_product_logs_parallel
-ORDER BY (data->>'details') <@> 'widget'
+ORDER BY (data->>'details') <@> 'widget', id
 LIMIT 5;
 
 SELECT id
 FROM expr_idx_product_logs_parallel
-ORDER BY (data->>'details') <@> bm25query('widget')
+ORDER BY (data->>'details') <@> bm25query('widget'), id
 LIMIT 5;
 
 SELECT id
 FROM expr_idx_product_logs_parallel
-ORDER BY (data->>'details') <@> to_bm25query('widget', 'expr_idx_product_logs_parallel_idx')
+ORDER BY (data->>'details') <@> to_bm25query('widget', 'expr_idx_product_logs_parallel_idx'), id
 LIMIT 5;
 
 
