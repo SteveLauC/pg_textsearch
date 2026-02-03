@@ -197,6 +197,23 @@ LIMIT 2;
 
 
 -- =====================================================================
+-- If expr contains a correlated subquery, index resolution should be
+-- skipped, and the query should fail at runtime
+-- =====================================================================
+\set ON_ERROR_STOP off
+SELECT l.id
+FROM expr_idx_product_logs l
+ORDER BY (SELECT l.data->>'details') <@> 'widget'
+LIMIT 2;
+
+SELECT l.id
+FROM expr_idx_product_logs l
+ORDER BY (SELECT l.data->>'details') <@> bm25query('widget')
+LIMIT 2;
+\set ON_ERROR_STOP on
+
+
+-- =====================================================================
 -- Cleanup
 -- =====================================================================
 DROP TABLE expr_idx_product_logs CASCADE;
