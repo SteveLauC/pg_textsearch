@@ -368,8 +368,9 @@ get_var_relation_and_attnum(
 }
 
 /*
- * The Var nodes in expr reference the same relation, this function extracts
- * that relation's OID and its RT index in query.rtable.
+ * For index resolution, if there is a BM25 index built on expr for a
+ * relation, this function extracts that relation's OID and its RT index
+ * in query.rtable.
  *
  * Return true is the extraction is successful.
  */
@@ -378,32 +379,67 @@ get_expr_relation_and_rtable_index(
 		Node *expr, Query *query, Oid *relid_out, int *rt_index_out)
 {
 	List		  *vars;
-	Var			  *var;
+	int			   varno = 0;
 	RangeTblEntry *rte;
+	ListCell	  *lc;
 
 	vars = pull_var_clause(expr, 0);
-	if (!vars || list_length(vars) == 0)
+	if (vars == NIL || list_length(vars) == 0)
+	{
+		list_free(vars);
 		return false;
+	}
 	/*
-	 * All the Var nodes with in expr should reference the same relation.
-	 * So we just extract the relation info from the first Var node.
+	 * If multiple Var nodes exist in expr, they should reference the same
+	 * relation as Postgres restricts this.
 	 */
-	var = (Var *)linitial(vars);
+	foreach (lc, vars)
+	{
+		Var *v = lfirst_node(Var, lc);
+		/* Var should reference relations in the current Query */
+		if (v->varlevelsup != 0)
+		{
+			list_free(vars);
+			return false;
+		}
 
-	if (var->varno < 1 || var->varno > list_length(query->rtable))
+		if (varno == 0)
+		{
+			varno = v->varno;
+		}
+		else if (varno != v->varno)
+		{
+			list_free(vars);
+			return false;
+		}
+	}
+
+	if (varno < 1 || varno > list_length(query->rtable))
+	{
+		list_free(vars);
 		return false;
+	}
 
-	rte = rt_fetch(var->varno, query->rtable);
+	rte = rt_fetch(varno, query->rtable);
+	if (rte->rtekind != RTE_RELATION)
+	{
+		list_free(vars);
+		return false;
+	}
 
 	*relid_out	  = rte->relid;
-	*rt_index_out = var->varno;
+	*rt_index_out = varno;
 
 	list_free(vars);
 	return true;
 }
 
 /*
- * Find BM25 index OID from an expression node that was possibly indexed.
+ * Index resolution.
+ *
+ * If there is a bm25 index built for expr, find it and return its OID.
+ * InvalidOid is returned if we couldn't find such an index. If multiple
+ * indexes are built on expr, current implementation returns the last one.
  */
 static Oid
 find_index_for_expr(Node *expr, ResolveIndexContext *context)
