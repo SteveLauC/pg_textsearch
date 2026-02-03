@@ -218,7 +218,15 @@ bm25_key_matches_query(
 }
 
 /*
- * Find BM25 index.
+ * If a bm25 index is built on the relation specified relid, return its
+ * OID. The index could be built
+ *
+ * - directly on a column, then attnum is that column's attribute number.
+ *   Otherwise, it is InvalidAttrNumber.
+ * - on expr, then attnum is InvalidAttrNumber as well.
+ *
+ * If multiple indexes exist, the current implementation returns the last
+ * one found.
  */
 static Oid
 find_bm25_index(
